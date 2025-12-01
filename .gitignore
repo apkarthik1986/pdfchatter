@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+.env
+venv/
+ENV/
+
+# C# / .NET
+bin/
+obj/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+*.csproj.user
+packages/
+*.nupkg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
