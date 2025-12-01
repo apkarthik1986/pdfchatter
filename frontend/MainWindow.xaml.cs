@@ -95,6 +95,25 @@ namespace PdfChatter
 
             string responseBody = await response.Content.ReadAsStringAsync();
 
+            // Check if the request was successful
+            if (!response.IsSuccessStatusCode)
+            {
+                // Try to extract error message from response
+                try
+                {
+                    using JsonDocument errorDoc = JsonDocument.Parse(responseBody);
+                    if (errorDoc.RootElement.TryGetProperty("answer", out JsonElement errorAnswer))
+                    {
+                        return $"Server error ({(int)response.StatusCode}): {errorAnswer.GetString()}";
+                    }
+                }
+                catch
+                {
+                    // If parsing fails, return generic error
+                }
+                return $"Server returned error status: {(int)response.StatusCode} {response.ReasonPhrase}";
+            }
+
             using JsonDocument doc = JsonDocument.Parse(responseBody);
             JsonElement root = doc.RootElement;
 

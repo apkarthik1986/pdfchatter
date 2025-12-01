@@ -86,6 +86,7 @@ The backend provides the following REST API endpoints:
 | `/health` | GET | Health check endpoint |
 | `/ask` | POST | Submit a question and get an answer |
 | `/pdfs` | GET | List all PDF files in the pdfs directory |
+| `/reload` | POST | Reload PDFs from disk (useful after adding new PDFs) |
 
 ### Example API Request
 

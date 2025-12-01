@@ -22,6 +22,25 @@ CORS(app)  # Enable CORS for cross-origin requests from the C# frontend
 # Directory containing PDF files
 PDF_DIRECTORY = os.path.join(os.path.dirname(__file__), 'pdfs')
 
+# Common stop words to filter out for better keyword matching
+STOP_WORDS = {
+    'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
+    'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+    'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need',
+    'it', 'its', 'this', 'that', 'these', 'those', 'i', 'you', 'he',
+    'she', 'we', 'they', 'what', 'which', 'who', 'whom', 'how', 'when',
+    'where', 'why', 'if', 'then', 'so', 'than', 'too', 'very', 'just',
+    'about', 'into', 'through', 'during', 'before', 'after', 'above',
+    'below', 'between', 'under', 'again', 'further', 'once', 'here',
+    'there', 'all', 'each', 'few', 'more', 'most', 'other', 'some',
+    'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'any', 'both'
+}
+
+# Cache for loaded PDF texts
+_pdf_cache = {}
+_pdf_cache_loaded = False
+
 
 def extract_text_from_pdf(pdf_path):
     """Extract text content from a PDF file."""
@@ -41,12 +60,23 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 
-def load_all_pdfs():
-    """Load and extract text from all PDFs in the pdfs directory."""
+def load_all_pdfs(force_reload=False):
+    """Load and extract text from all PDFs in the pdfs directory.
+    
+    Uses caching to avoid reloading PDFs on every request.
+    Set force_reload=True to reload PDFs from disk.
+    """
+    global _pdf_cache, _pdf_cache_loaded
+    
+    if _pdf_cache_loaded and not force_reload:
+        return _pdf_cache
+    
     all_text = {}
     
     if not os.path.exists(PDF_DIRECTORY):
         os.makedirs(PDF_DIRECTORY)
+        _pdf_cache = all_text
+        _pdf_cache_loaded = True
         return all_text
     
     for filename in os.listdir(PDF_DIRECTORY):
@@ -54,18 +84,33 @@ def load_all_pdfs():
             pdf_path = os.path.join(PDF_DIRECTORY, filename)
             all_text[filename] = extract_text_from_pdf(pdf_path)
     
+    _pdf_cache = all_text
+    _pdf_cache_loaded = True
     return all_text
+
+
+def extract_keywords(text):
+    """Extract meaningful keywords from text, filtering stop words and punctuation."""
+    import re
+    # Remove punctuation and convert to lowercase
+    words = re.findall(r'\b[a-z]+\b', text.lower())
+    # Filter out stop words and short words
+    keywords = [w for w in words if w not in STOP_WORDS and len(w) > 2]
+    return keywords
 
 
 def find_matching_content(question, pdf_texts):
     """
     Find content in PDFs that matches the question.
     
-    This is a basic keyword matching implementation.
+    This is a basic keyword matching implementation with stop word filtering.
     NLP/AI-powered reasoning can be added later for better results.
     """
-    question_lower = question.lower()
-    keywords = question_lower.split()
+    keywords = extract_keywords(question)
+    
+    # Fall back to simple split if no keywords after filtering
+    if not keywords:
+        keywords = [w.lower() for w in question.split() if len(w) > 2]
     
     results = []
     
@@ -202,6 +247,17 @@ def list_pdfs():
     return jsonify({'pdfs': pdfs})
 
 
+@app.route('/reload', methods=['POST'])
+def reload_pdfs():
+    """Reload PDFs from disk. Useful when new PDFs are added."""
+    pdf_texts = load_all_pdfs(force_reload=True)
+    return jsonify({
+        'success': True,
+        'message': f'Reloaded {len(pdf_texts)} PDF file(s).',
+        'pdfs': list(pdf_texts.keys())
+    })
+
+
 if __name__ == '__main__':
     print("Starting PDF QA Server...")
     print(f"PDF directory: {PDF_DIRECTORY}")
@@ -209,5 +265,9 @@ if __name__ == '__main__':
     
     if not PDF_SUPPORT:
         print("Warning: PyPDF2 not installed. Install it with: pip install PyPDF2")
+    
+    # Pre-load PDFs at startup
+    loaded_pdfs = load_all_pdfs()
+    print(f"Loaded {len(loaded_pdfs)} PDF file(s) at startup")
     
     app.run(host='0.0.0.0', port=5000, debug=True)
