@@ -16,6 +16,7 @@ namespace PdfChatter
     {
         private readonly HttpClient _httpClient;
         private const string BackendUrl = "http://localhost:5000";
+        private const string PlaceholderText = "Enter your question here...";
 
         public MainWindow()
         {
@@ -29,7 +30,7 @@ namespace PdfChatter
         /// </summary>
         private void QuestionTextBox_GotFocus(object sender, RoutedEventArgs e)
         {
-            if (QuestionTextBox.Text == "Enter your question here...")
+            if (QuestionTextBox.Text == PlaceholderText)
             {
                 QuestionTextBox.Text = "";
             }
@@ -43,7 +44,7 @@ namespace PdfChatter
         {
             string question = QuestionTextBox.Text.Trim();
 
-            if (string.IsNullOrEmpty(question) || question == "Enter your question here...")
+            if (string.IsNullOrEmpty(question) || question == PlaceholderText)
             {
                 MessageBox.Show("Please enter a question.", "Input Required", 
                     MessageBoxButton.OK, MessageBoxImage.Warning);

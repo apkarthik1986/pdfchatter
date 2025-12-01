@@ -6,6 +6,7 @@ receives questions via HTTP POST requests, and returns matching content.
 """
 
 import os
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -91,7 +92,6 @@ def load_all_pdfs(force_reload=False):
 
 def extract_keywords(text):
     """Extract meaningful keywords from text, filtering stop words and punctuation."""
-    import re
     # Remove punctuation and convert to lowercase
     words = re.findall(r'\b[a-z]+\b', text.lower())
     # Filter out stop words and short words
@@ -111,6 +111,10 @@ def find_matching_content(question, pdf_texts):
     # Fall back to simple split if no keywords after filtering
     if not keywords:
         keywords = [w.lower() for w in question.split() if len(w) > 2]
+    
+    # Return empty results if still no keywords
+    if not keywords:
+        return []
     
     results = []
     
@@ -135,10 +139,14 @@ def find_matching_content(question, pdf_texts):
             
             if matching_sentences:
                 # Return up to 3 most relevant sentences
+                joined_content = '. '.join(matching_sentences[:3])
+                # Add period only if content doesn't already end with punctuation
+                if joined_content and not joined_content[-1] in '.!?':
+                    joined_content += '.'
                 results.append({
                     'filename': filename,
-                    'content': '. '.join(matching_sentences[:3]) + '.',
-                    'match_score': len(matching_keywords) / len(keywords) if keywords else 0
+                    'content': joined_content,
+                    'match_score': len(matching_keywords) / len(keywords)
                 })
     
     # Sort by match score descending
