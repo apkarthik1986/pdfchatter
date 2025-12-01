@@ -55,6 +55,11 @@ pdfchatter/
 
    The server will start on `http://localhost:5000`.
 
+   **Note**: Debug mode is disabled by default for security. To enable debug mode during development, run:
+   ```bash
+   FLASK_DEBUG=1 python pdf_qa_server.py
+   ```
+
 ### Step 2: Set Up the C# Frontend
 
 1. Open Visual Studio and create a new WPF Application project.

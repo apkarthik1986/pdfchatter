@@ -278,4 +278,7 @@ if __name__ == '__main__':
     loaded_pdfs = load_all_pdfs()
     print(f"Loaded {len(loaded_pdfs)} PDF file(s) at startup")
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Debug mode is disabled by default for security
+    # Set environment variable FLASK_DEBUG=1 to enable debug mode during development
+    debug_mode = os.environ.get('FLASK_DEBUG', '0') == '1'
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
