@@ -1,0 +1,57 @@
+<Window x:Class="PdfChatter.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PDF Chatter" Height="500" Width="700"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Header -->
+        <TextBlock Grid.Row="0" Text="PDF Chatter - Ask Questions About Your PDFs" 
+                   FontSize="18" FontWeight="Bold" Margin="0,0,0,10"
+                   HorizontalAlignment="Center"/>
+        
+        <!-- Question Input Section -->
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            
+            <TextBox Grid.Column="0" x:Name="QuestionTextBox" 
+                     Margin="0,0,10,0" Padding="5"
+                     FontSize="14"
+                     Text="Enter your question here..."
+                     GotFocus="QuestionTextBox_GotFocus"/>
+            
+            <Button Grid.Column="1" x:Name="AskButton" 
+                    Content="Ask" Width="80" Padding="10,5"
+                    FontSize="14"
+                    Click="AskButton_Click"/>
+        </Grid>
+        
+        <!-- Answer Display Section -->
+        <GroupBox Grid.Row="2" Header="Answer" Margin="0,0,0,10">
+            <ScrollViewer>
+                <TextBox x:Name="AnswerTextBox" 
+                         TextWrapping="Wrap" 
+                         IsReadOnly="True"
+                         BorderThickness="0"
+                         FontSize="13"
+                         Text="Your answer will appear here..."/>
+            </ScrollViewer>
+        </GroupBox>
+        
+        <!-- Status Bar -->
+        <StatusBar Grid.Row="3">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="Ready"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
