@@ -218,7 +218,7 @@ def ask_question():
         if not pdf_texts:
             return jsonify({
                 'success': False,
-                'answer': 'No PDF files loaded. Please select a PDF folder first using the "Select PDF Folder" button.',
+                'answer': 'No PDF files are currently loaded. Please load PDFs from a folder first.',
                 'sources': []
             })
         
@@ -332,7 +332,7 @@ def load_pdfs_from_folder():
         
         if not pdf_texts:
             return jsonify({
-                'success': True,
+                'success': False,
                 'message': f'No PDF files found in: {folder_path}',
                 'pdfs': []
             })
