@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
 using Microsoft.Win32;
 
 namespace PdfChatter
@@ -11,21 +12,21 @@ namespace PdfChatter
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// This WPF application connects to a Python Flask backend
-    /// to answer questions based on PDF content.
+    /// that uses semantic search to answer questions based on PDF content.
     /// </summary>
     public partial class MainWindow : Window
     {
         private readonly HttpClient _httpClient;
         private const string BackendUrl = "http://127.0.0.1:5000";
         private const string PlaceholderText = "Enter your question here...";
-        private const string DisabledPlaceholderText = "Select a PDF folder first...";
+        private const string DisabledPlaceholderText = "Load PDFs first to ask questions...";
         private bool _pdfsLoaded = false;
 
         public MainWindow()
         {
             InitializeComponent();
             _httpClient = new HttpClient();
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
+            _httpClient.Timeout = TimeSpan.FromSeconds(60); // Increased timeout for semantic search
         }
 
         /// <summary>
@@ -50,6 +51,7 @@ namespace PdfChatter
 
         /// <summary>
         /// Send the folder path to the backend and load PDFs.
+        /// Creates semantic embeddings for all PDF content.
         /// </summary>
         private async Task LoadPdfsFromFolderAsync(string folderPath)
         {
@@ -57,10 +59,11 @@ namespace PdfChatter
             SelectFolderButton.IsEnabled = false;
             AskButton.IsEnabled = false;
             QuestionTextBox.IsEnabled = false;
-            StatusText.Text = "Loading PDFs from folder...";
+            StatusText.Text = "Loading PDFs and creating semantic index...";
             FolderPathTextBox.Text = folderPath;
             PdfCountText.Text = "";
-            AnswerTextBox.Text = "Loading PDFs...";
+            ConfidenceText.Text = "";
+            AnswerTextBox.Text = "Loading PDFs and building semantic search index...\nThis may take a moment for large documents.";
 
             try
             {
@@ -94,9 +97,11 @@ namespace PdfChatter
                     QuestionTextBox.IsEnabled = true;
                     AskButton.IsEnabled = true;
                     QuestionTextBox.Text = PlaceholderText;
-                    PdfCountText.Text = $"({pdfCount} PDF{(pdfCount != 1 ? "s" : "")} loaded)";
-                    AnswerTextBox.Text = $"Ready! {pdfCount} PDF file(s) loaded.\n\nAsk a question about your PDFs.";
-                    StatusText.Text = "PDFs loaded successfully. Ready to answer questions.";
+                    PdfCountText.Text = $"({pdfCount} PDF{(pdfCount != 1 ? "s" : "")} indexed)";
+                    AnswerTextBox.Text = $"✓ {pdfCount} PDF file(s) loaded and indexed for semantic search.\n\n" +
+                        "Ask any question about your documents. The AI will find the most relevant passages " +
+                        "and show a confidence score indicating how well the answer matches your question.";
+                    StatusText.Text = "Ready - PDFs indexed. Ask a question to search.";
                 }
                 else
                 {
@@ -112,19 +117,30 @@ namespace PdfChatter
             catch (HttpRequestException ex)
             {
                 _pdfsLoaded = false;
-                AnswerTextBox.Text = "Error: Could not connect to the backend server.\n\n" +
+                AnswerTextBox.Text = "⚠ Error: Could not connect to the backend server.\n\n" +
                     "Please make sure the Python backend is running:\n" +
                     "1. Navigate to the backend directory\n" +
-                    "2. Run: python pdf_qa_server.py\n\n" +
+                    "2. Run: pip install flask flask-cors PyPDF2 sentence-transformers\n" +
+                    "3. Run: python pdf_qa_server.py\n\n" +
                     $"Technical details: {ex.Message}";
-                StatusText.Text = "Connection error";
+                StatusText.Text = "Connection error - Is the backend running?";
+                QuestionTextBox.IsEnabled = false;
+                AskButton.IsEnabled = false;
+            }
+            catch (TaskCanceledException)
+            {
+                _pdfsLoaded = false;
+                AnswerTextBox.Text = "⚠ Request timed out.\n\n" +
+                    "Loading and indexing PDFs can take time for large documents.\n" +
+                    "Please try again or check if the backend server is responding.";
+                StatusText.Text = "Timeout - Please try again";
                 QuestionTextBox.IsEnabled = false;
                 AskButton.IsEnabled = false;
             }
             catch (Exception ex)
             {
                 _pdfsLoaded = false;
-                AnswerTextBox.Text = $"Error loading PDFs: {ex.Message}";
+                AnswerTextBox.Text = $"⚠ Error loading PDFs: {ex.Message}";
                 StatusText.Text = "Error occurred";
                 QuestionTextBox.IsEnabled = false;
                 AskButton.IsEnabled = false;
@@ -149,13 +165,14 @@ namespace PdfChatter
 
         /// <summary>
         /// Handle the Ask button click event.
-        /// Sends the question to the backend and displays the answer.
+        /// Sends the question to the backend and displays the answer with confidence.
         /// </summary>
         private async void AskButton_Click(object sender, RoutedEventArgs e)
         {
             if (!_pdfsLoaded)
             {
-                MessageBox.Show("Please select a PDF folder first.", "PDFs Not Loaded", 
+                MessageBox.Show("Please select a PDF folder first to load documents.", 
+                    "No PDFs Loaded", 
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -173,27 +190,39 @@ namespace PdfChatter
             // Disable UI while processing
             AskButton.IsEnabled = false;
             SelectFolderButton.IsEnabled = false;
-            StatusText.Text = "Sending question to backend...";
-            AnswerTextBox.Text = "Processing...";
+            StatusText.Text = "Searching for relevant passages...";
+            AnswerTextBox.Text = "🔍 Performing semantic search...";
+            ConfidenceText.Text = "";
 
             try
             {
-                string answer = await AskQuestionAsync(question);
-                AnswerTextBox.Text = answer;
-                StatusText.Text = "Answer received";
+                var result = await AskQuestionAsync(question);
+                AnswerTextBox.Text = result.Answer;
+                UpdateConfidenceDisplay(result.Confidence);
+                StatusText.Text = result.Confidence > 0 
+                    ? $"Found relevant content with {result.Confidence}% confidence" 
+                    : "Search complete";
             }
             catch (HttpRequestException ex)
             {
-                AnswerTextBox.Text = "Error: Could not connect to the backend server.\n\n" +
+                ConfidenceText.Text = "";
+                AnswerTextBox.Text = "⚠ Error: Could not connect to the backend server.\n\n" +
                     "Please make sure the Python backend is running:\n" +
                     "1. Navigate to the backend directory\n" +
                     "2. Run: python pdf_qa_server.py\n\n" +
                     $"Technical details: {ex.Message}";
                 StatusText.Text = "Connection error";
             }
+            catch (TaskCanceledException)
+            {
+                ConfidenceText.Text = "";
+                AnswerTextBox.Text = "⚠ Request timed out.\n\nThe semantic search took too long. Please try again.";
+                StatusText.Text = "Timeout - Please try again";
+            }
             catch (Exception ex)
             {
-                AnswerTextBox.Text = $"Error: {ex.Message}";
+                ConfidenceText.Text = "";
+                AnswerTextBox.Text = $"⚠ Error: {ex.Message}";
                 StatusText.Text = "Error occurred";
             }
             finally
@@ -204,9 +233,42 @@ namespace PdfChatter
         }
 
         /// <summary>
-        /// Send a question to the backend API and return the answer.
+        /// Update the confidence display with appropriate color coding.
         /// </summary>
-        private async Task<string> AskQuestionAsync(string question)
+        private void UpdateConfidenceDisplay(double confidence)
+        {
+            if (confidence <= 0)
+            {
+                ConfidenceText.Text = "";
+                return;
+            }
+
+            ConfidenceText.Text = $"[{confidence}% confidence]";
+            
+            // Color code based on confidence level
+            if (confidence >= 70)
+            {
+                ConfidenceText.Foreground = new SolidColorBrush(Colors.Green);
+            }
+            else if (confidence >= 40)
+            {
+                ConfidenceText.Foreground = new SolidColorBrush(Colors.Orange);
+            }
+            else
+            {
+                ConfidenceText.Foreground = new SolidColorBrush(Colors.Gray);
+            }
+        }
+
+        /// <summary>
+        /// Result from asking a question, including answer and confidence.
+        /// </summary>
+        private record QuestionResult(string Answer, double Confidence);
+
+        /// <summary>
+        /// Send a question to the backend API and return the answer with confidence.
+        /// </summary>
+        private async Task<QuestionResult> AskQuestionAsync(string question)
         {
             var requestBody = new { question = question };
             string jsonContent = JsonSerializer.Serialize(requestBody);
@@ -226,25 +288,37 @@ namespace PdfChatter
                     using JsonDocument errorDoc = JsonDocument.Parse(responseBody);
                     if (errorDoc.RootElement.TryGetProperty("answer", out JsonElement errorAnswer))
                     {
-                        return $"Server error ({(int)response.StatusCode}): {errorAnswer.GetString()}";
+                        return new QuestionResult(
+                            $"Server error ({(int)response.StatusCode}): {errorAnswer.GetString()}", 
+                            0);
                     }
                 }
                 catch
                 {
                     // If parsing fails, return generic error
                 }
-                return $"Server returned error status: {(int)response.StatusCode} {response.ReasonPhrase}";
+                return new QuestionResult(
+                    $"Server returned error status: {(int)response.StatusCode} {response.ReasonPhrase}", 
+                    0);
             }
 
             using JsonDocument doc = JsonDocument.Parse(responseBody);
             JsonElement root = doc.RootElement;
 
+            string answer = "No answer received.";
+            double confidence = 0;
+
             if (root.TryGetProperty("answer", out JsonElement answerElement))
             {
-                return answerElement.GetString() ?? "No answer received.";
+                answer = answerElement.GetString() ?? "No answer received.";
             }
 
-            return "Unexpected response format from the server.";
+            if (root.TryGetProperty("top_confidence", out JsonElement confidenceElement))
+            {
+                confidence = confidenceElement.GetDouble();
+            }
+
+            return new QuestionResult(answer, confidence);
         }
 
         /// <summary>
