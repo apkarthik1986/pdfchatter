@@ -20,6 +20,11 @@ namespace PdfChatter
         private const string BackendUrl = "http://127.0.0.1:5000";
         private const string PlaceholderText = "Enter your question here...";
         private const string DisabledPlaceholderText = "Load PDFs first to ask questions...";
+        
+        // Confidence thresholds for color coding (percentage)
+        private const double HighConfidenceThreshold = 70.0;
+        private const double MediumConfidenceThreshold = 40.0;
+        
         private bool _pdfsLoaded = false;
 
         public MainWindow()
@@ -246,11 +251,11 @@ namespace PdfChatter
             ConfidenceText.Text = $"[{confidence}% confidence]";
             
             // Color code based on confidence level
-            if (confidence >= 70)
+            if (confidence >= HighConfidenceThreshold)
             {
                 ConfidenceText.Foreground = new SolidColorBrush(Colors.Green);
             }
-            else if (confidence >= 40)
+            else if (confidence >= MediumConfidenceThreshold)
             {
                 ConfidenceText.Foreground = new SolidColorBrush(Colors.Orange);
             }

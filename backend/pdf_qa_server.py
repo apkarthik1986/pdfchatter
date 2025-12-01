@@ -32,6 +32,9 @@ CORS(app)  # Enable CORS for cross-origin requests from the C# frontend
 # Directory containing PDF files
 PDF_DIRECTORY = os.path.join(os.path.dirname(__file__), 'pdfs')
 
+# Semantic search configuration
+RELEVANCE_THRESHOLD = 0.2  # Minimum cosine similarity for results (0-1 scale)
+
 # Sentence transformer model (loaded lazily)
 _sentence_model = None
 
@@ -202,10 +205,16 @@ def semantic_search(question, top_k=3):
     # Encode the question
     question_embedding = model.encode([question], convert_to_numpy=True)
     
-    # Calculate cosine similarity
-    # Normalize embeddings for cosine similarity
-    question_norm = question_embedding / np.linalg.norm(question_embedding)
-    passage_norms = _passage_embeddings / np.linalg.norm(_passage_embeddings, axis=1, keepdims=True)
+    # Calculate cosine similarity with safe normalization
+    question_norm_value = np.linalg.norm(question_embedding)
+    if question_norm_value == 0:
+        return []  # Cannot compare zero-norm vectors
+    question_norm = question_embedding / question_norm_value
+    
+    passage_norm_values = np.linalg.norm(_passage_embeddings, axis=1, keepdims=True)
+    # Replace zero norms with 1 to avoid division by zero (results in zero similarity)
+    passage_norm_values = np.where(passage_norm_values == 0, 1, passage_norm_values)
+    passage_norms = _passage_embeddings / passage_norm_values
     
     similarities = np.dot(passage_norms, question_norm.T).flatten()
     
@@ -216,7 +225,7 @@ def semantic_search(question, top_k=3):
     for idx in top_indices:
         similarity = float(similarities[idx])
         # Only include results with reasonable similarity (above threshold)
-        if similarity > 0.2:  # Threshold for relevance
+        if similarity > RELEVANCE_THRESHOLD:
             filename, passage = _passage_metadata[idx]
             results.append({
                 'filename': filename,
