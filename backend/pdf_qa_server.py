@@ -41,6 +41,7 @@ STOP_WORDS = {
 # Cache for loaded PDF texts
 _pdf_cache = {}
 _pdf_cache_loaded = False
+_pdf_folder_path = None  # Currently loaded folder path
 
 
 def extract_text_from_pdf(pdf_path):
@@ -61,32 +62,43 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 
-def load_all_pdfs(force_reload=False):
-    """Load and extract text from all PDFs in the pdfs directory.
+def load_all_pdfs(force_reload=False, folder_path=None):
+    """Load and extract text from all PDFs in the specified directory.
     
     Uses caching to avoid reloading PDFs on every request.
     Set force_reload=True to reload PDFs from disk.
+    If folder_path is provided, loads from that folder instead of the default.
     """
-    global _pdf_cache, _pdf_cache_loaded
+    global _pdf_cache, _pdf_cache_loaded, _pdf_folder_path
+    
+    # Determine which directory to load from
+    target_directory = folder_path if folder_path else PDF_DIRECTORY
+    
+    # If folder changed, force reload
+    if folder_path and folder_path != _pdf_folder_path:
+        force_reload = True
     
     if _pdf_cache_loaded and not force_reload:
         return _pdf_cache
     
     all_text = {}
     
-    if not os.path.exists(PDF_DIRECTORY):
-        os.makedirs(PDF_DIRECTORY)
+    if not os.path.exists(target_directory):
+        if not folder_path:
+            os.makedirs(target_directory)
         _pdf_cache = all_text
         _pdf_cache_loaded = True
+        _pdf_folder_path = target_directory
         return all_text
     
-    for filename in os.listdir(PDF_DIRECTORY):
+    for filename in os.listdir(target_directory):
         if filename.lower().endswith('.pdf'):
-            pdf_path = os.path.join(PDF_DIRECTORY, filename)
+            pdf_path = os.path.join(target_directory, filename)
             all_text[filename] = extract_text_from_pdf(pdf_path)
     
     _pdf_cache = all_text
     _pdf_cache_loaded = True
+    _pdf_folder_path = target_directory
     return all_text
 
 
@@ -205,8 +217,8 @@ def ask_question():
         
         if not pdf_texts:
             return jsonify({
-                'success': True,
-                'answer': 'No PDF files found in the pdfs directory. Please add PDF files to backend/pdfs/ and try again.',
+                'success': False,
+                'answer': 'No PDF files loaded. Please select a PDF folder first using the "Select PDF Folder" button.',
                 'sources': []
             })
         
@@ -264,6 +276,79 @@ def reload_pdfs():
         'message': f'Reloaded {len(pdf_texts)} PDF file(s).',
         'pdfs': list(pdf_texts.keys())
     })
+
+
+@app.route('/load_pdfs', methods=['POST'])
+def load_pdfs_from_folder():
+    """Load PDFs from a user-specified folder.
+    
+    Expected JSON body:
+    {
+        "folder_path": "C:/path/to/pdfs"
+    }
+    
+    Returns:
+    {
+        "success": true/false,
+        "message": "Status message",
+        "pdfs": ["file1.pdf", "file2.pdf"]
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'folder_path' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Please provide a folder_path.',
+                'pdfs': []
+            }), 400
+        
+        folder_path = data['folder_path'].strip()
+        
+        if not folder_path:
+            return jsonify({
+                'success': False,
+                'message': 'Folder path cannot be empty.',
+                'pdfs': []
+            }), 400
+        
+        if not os.path.exists(folder_path):
+            return jsonify({
+                'success': False,
+                'message': f'Folder does not exist: {folder_path}',
+                'pdfs': []
+            }), 400
+        
+        if not os.path.isdir(folder_path):
+            return jsonify({
+                'success': False,
+                'message': f'Path is not a directory: {folder_path}',
+                'pdfs': []
+            }), 400
+        
+        # Load PDFs from the specified folder
+        pdf_texts = load_all_pdfs(force_reload=True, folder_path=folder_path)
+        
+        if not pdf_texts:
+            return jsonify({
+                'success': True,
+                'message': f'No PDF files found in: {folder_path}',
+                'pdfs': []
+            })
+        
+        return jsonify({
+            'success': True,
+            'message': f'Loaded {len(pdf_texts)} PDF file(s) from: {folder_path}',
+            'pdfs': list(pdf_texts.keys())
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'An error occurred: {str(e)}',
+            'pdfs': []
+        }), 500
 
 
 if __name__ == '__main__':

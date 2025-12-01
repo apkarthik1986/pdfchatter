@@ -92,13 +92,20 @@ The backend provides the following REST API endpoints:
 | `/ask` | POST | Submit a question and get an answer |
 | `/pdfs` | GET | List all PDF files in the pdfs directory |
 | `/reload` | POST | Reload PDFs from disk (useful after adding new PDFs) |
+| `/load_pdfs` | POST | Load PDFs from a user-specified folder path |
 
-### Example API Request
+### Example API Requests
 
 ```bash
+# Ask a question
 curl -X POST http://localhost:5000/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "What is the main topic?"}'
+
+# Load PDFs from a specific folder
+curl -X POST http://localhost:5000/load_pdfs \
+  -H "Content-Type: application/json" \
+  -d '{"folder_path": "C:/Users/Documents/MyPDFs"}'
 ```
 
 ## Future Enhancements
