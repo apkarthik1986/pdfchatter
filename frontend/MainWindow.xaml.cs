@@ -15,7 +15,7 @@ namespace PdfChatter
     public partial class MainWindow : Window
     {
         private readonly HttpClient _httpClient;
-        private const string BackendUrl = "http://localhost:5000";
+        private const string BackendUrl = "http://127.0.0.1:5000";
         private const string PlaceholderText = "Enter your question here...";
 
         public MainWindow()
