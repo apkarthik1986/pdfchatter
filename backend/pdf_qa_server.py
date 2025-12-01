@@ -1,8 +1,9 @@
 """
-Flask server for PDF Question Answering.
+Flask server for PDF Question Answering with Semantic Search.
 
-This server extracts text from PDF files in the backend/pdfs/ directory,
-receives questions via HTTP POST requests, and returns matching content.
+This server extracts text from PDF files, creates vector embeddings using
+sentence-transformers for semantic search, and returns the most relevant
+passages based on user questions.
 """
 
 import os
@@ -17,31 +18,32 @@ try:
 except ImportError:
     PDF_SUPPORT = False
 
+# Try to import sentence-transformers for semantic search
+try:
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+    SEMANTIC_SEARCH_SUPPORT = True
+except ImportError:
+    SEMANTIC_SEARCH_SUPPORT = False
+
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests from the C# frontend
 
 # Directory containing PDF files
 PDF_DIRECTORY = os.path.join(os.path.dirname(__file__), 'pdfs')
 
-# Common stop words to filter out for better keyword matching
-STOP_WORDS = {
-    'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-    'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
-    'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
-    'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need',
-    'it', 'its', 'this', 'that', 'these', 'those', 'i', 'you', 'he',
-    'she', 'we', 'they', 'what', 'which', 'who', 'whom', 'how', 'when',
-    'where', 'why', 'if', 'then', 'so', 'than', 'too', 'very', 'just',
-    'about', 'into', 'through', 'during', 'before', 'after', 'above',
-    'below', 'between', 'under', 'again', 'further', 'once', 'here',
-    'there', 'all', 'each', 'few', 'more', 'most', 'other', 'some',
-    'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'any', 'both'
-}
+# Semantic search configuration
+RELEVANCE_THRESHOLD = 0.2  # Minimum cosine similarity for results (0-1 scale)
 
-# Cache for loaded PDF texts
+# Sentence transformer model (loaded lazily)
+_sentence_model = None
+
+# Cache for loaded PDF texts and embeddings
 _pdf_cache = {}
 _pdf_cache_loaded = False
 _pdf_folder_path = None  # Currently loaded folder path
+_passage_embeddings = None  # Numpy array of passage embeddings
+_passage_metadata = []  # List of (filename, passage_text) tuples
 
 
 def extract_text_from_pdf(pdf_path):
@@ -62,12 +64,93 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 
+def get_sentence_model():
+    """Load the sentence transformer model (lazy loading)."""
+    global _sentence_model
+    if _sentence_model is None and SEMANTIC_SEARCH_SUPPORT:
+        try:
+            print("Loading sentence transformer model...")
+            # Use a lightweight model for fast local inference
+            _sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+            print("Sentence transformer model loaded.")
+        except Exception as e:
+            print(f"Warning: Could not load sentence transformer model: {e}")
+            print("Semantic search will not be available until the model is downloaded.")
+            _sentence_model = None
+    return _sentence_model
+
+
+def split_into_passages(text, max_length=500):
+    """Split text into passages of approximately max_length characters.
+    
+    Tries to split at sentence boundaries for better context.
+    """
+    # Split by sentences (period followed by space or newline)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    
+    passages = []
+    current_passage = ""
+    
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+            
+        # If adding this sentence would exceed max_length, start new passage
+        if len(current_passage) + len(sentence) > max_length and current_passage:
+            passages.append(current_passage.strip())
+            current_passage = sentence
+        else:
+            current_passage += " " + sentence if current_passage else sentence
+    
+    # Don't forget the last passage
+    if current_passage.strip():
+        passages.append(current_passage.strip())
+    
+    return passages
+
+
+def build_passage_index(pdf_texts):
+    """Build a semantic index of all passages from PDFs.
+    
+    Creates embeddings for each passage and stores metadata.
+    """
+    global _passage_embeddings, _passage_metadata
+    
+    model = get_sentence_model()
+    if model is None:
+        _passage_embeddings = None
+        _passage_metadata = []
+        return
+    
+    all_passages = []
+    _passage_metadata = []
+    
+    for filename, text in pdf_texts.items():
+        if not text:
+            continue
+        passages = split_into_passages(text)
+        for passage in passages:
+            if len(passage) > 20:  # Skip very short passages
+                all_passages.append(passage)
+                _passage_metadata.append((filename, passage))
+    
+    if all_passages:
+        print(f"Creating embeddings for {len(all_passages)} passages...")
+        _passage_embeddings = model.encode(all_passages, convert_to_numpy=True)
+        print(f"Embeddings created with shape: {_passage_embeddings.shape}")
+    else:
+        _passage_embeddings = None
+        _passage_metadata = []
+
+
 def load_all_pdfs(force_reload=False, folder_path=None):
     """Load and extract text from all PDFs in the specified directory.
     
     Uses caching to avoid reloading PDFs on every request.
     Set force_reload=True to reload PDFs from disk.
     If folder_path is provided, loads from that folder instead of the default.
+    Also builds the semantic search index when loading.
     """
     global _pdf_cache, _pdf_cache_loaded, _pdf_folder_path
     
@@ -89,6 +172,8 @@ def load_all_pdfs(force_reload=False, folder_path=None):
         _pdf_cache = all_text
         _pdf_cache_loaded = True
         _pdf_folder_path = target_directory
+        # Clear the embeddings index
+        build_passage_index({})
         return all_text
     
     for filename in os.listdir(target_directory):
@@ -99,70 +184,54 @@ def load_all_pdfs(force_reload=False, folder_path=None):
     _pdf_cache = all_text
     _pdf_cache_loaded = True
     _pdf_folder_path = target_directory
+    
+    # Build the semantic search index
+    build_passage_index(all_text)
+    
     return all_text
 
 
-def extract_keywords(text):
-    """Extract meaningful keywords from text, filtering stop words and punctuation."""
-    # Remove punctuation and convert to lowercase
-    words = re.findall(r'\b[a-z]+\b', text.lower())
-    # Filter out stop words and short words
-    keywords = [w for w in words if w not in STOP_WORDS and len(w) > 2]
-    return keywords
-
-
-def find_matching_content(question, pdf_texts):
+def semantic_search(question, top_k=3):
+    """Perform semantic search to find the most relevant passages.
+    
+    Returns a list of results with filename, content, and confidence score.
     """
-    Find content in PDFs that matches the question.
+    global _passage_embeddings, _passage_metadata
     
-    This is a basic keyword matching implementation with stop word filtering.
-    NLP/AI-powered reasoning can be added later for better results.
-    """
-    keywords = extract_keywords(question)
-    
-    # Fall back to simple split if no keywords after filtering
-    if not keywords:
-        keywords = [w.lower() for w in question.split() if len(w) > 2]
-    
-    # Return empty results if still no keywords
-    if not keywords:
+    model = get_sentence_model()
+    if model is None or _passage_embeddings is None or len(_passage_metadata) == 0:
         return []
     
+    # Encode the question
+    question_embedding = model.encode([question], convert_to_numpy=True)
+    
+    # Calculate cosine similarity with safe normalization
+    question_norm_value = np.linalg.norm(question_embedding)
+    if question_norm_value == 0:
+        return []  # Cannot compare zero-norm vectors
+    question_norm = question_embedding / question_norm_value
+    
+    passage_norm_values = np.linalg.norm(_passage_embeddings, axis=1, keepdims=True)
+    # Replace zero norms with 1 to avoid division by zero (results in zero similarity)
+    passage_norm_values = np.where(passage_norm_values == 0, 1, passage_norm_values)
+    passage_norms = _passage_embeddings / passage_norm_values
+    
+    similarities = np.dot(passage_norms, question_norm.T).flatten()
+    
+    # Get top-k results
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+    
     results = []
-    
-    for filename, text in pdf_texts.items():
-        if not text:
-            continue
-            
-        text_lower = text.lower()
-        
-        # Check if any keywords are in the text
-        matching_keywords = [kw for kw in keywords if kw in text_lower]
-        
-        if matching_keywords:
-            # Find sentences containing matching keywords
-            sentences = text.replace('\n', ' ').split('.')
-            matching_sentences = []
-            
-            for sentence in sentences:
-                sentence_lower = sentence.lower()
-                if any(kw in sentence_lower for kw in matching_keywords):
-                    matching_sentences.append(sentence.strip())
-            
-            if matching_sentences:
-                # Return up to 3 most relevant sentences
-                joined_content = '. '.join(matching_sentences[:3])
-                # Add period only if content doesn't already end with punctuation
-                if joined_content and not joined_content[-1] in '.!?':
-                    joined_content += '.'
-                results.append({
-                    'filename': filename,
-                    'content': joined_content,
-                    'match_score': len(matching_keywords) / len(keywords)
-                })
-    
-    # Sort by match score descending
-    results.sort(key=lambda x: x['match_score'], reverse=True)
+    for idx in top_indices:
+        similarity = float(similarities[idx])
+        # Only include results with reasonable similarity (above threshold)
+        if similarity > RELEVANCE_THRESHOLD:
+            filename, passage = _passage_metadata[idx]
+            results.append({
+                'filename': filename,
+                'content': passage,
+                'confidence': round(similarity * 100, 1)  # Convert to percentage
+            })
     
     return results
 
@@ -172,14 +241,15 @@ def health_check():
     """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
-        'pdf_support': PDF_SUPPORT
+        'pdf_support': PDF_SUPPORT,
+        'semantic_search_support': SEMANTIC_SEARCH_SUPPORT
     })
 
 
 @app.route('/ask', methods=['POST'])
 def ask_question():
     """
-    Receive a question and return matching content from PDFs.
+    Receive a question and return matching content from PDFs using semantic search.
     
     Expected JSON body:
     {
@@ -190,7 +260,8 @@ def ask_question():
     {
         "success": true/false,
         "answer": "Matching content or message",
-        "sources": [{"filename": "...", "content": "..."}]
+        "sources": [{"filename": "...", "content": "...", "confidence": 85.2}],
+        "top_confidence": 85.2
     }
     """
     try:
@@ -200,7 +271,8 @@ def ask_question():
             return jsonify({
                 'success': False,
                 'answer': 'Please provide a question.',
-                'sources': []
+                'sources': [],
+                'top_confidence': 0
             }), 400
         
         question = data['question'].strip()
@@ -209,51 +281,60 @@ def ask_question():
             return jsonify({
                 'success': False,
                 'answer': 'Question cannot be empty.',
-                'sources': []
+                'sources': [],
+                'top_confidence': 0
             }), 400
         
-        # Load PDF texts
+        # Load PDF texts (uses cached data if already loaded)
         pdf_texts = load_all_pdfs()
         
         if not pdf_texts:
             return jsonify({
                 'success': False,
                 'answer': 'No PDF files are currently loaded. Please load PDFs from a folder first.',
-                'sources': []
+                'sources': [],
+                'top_confidence': 0
             })
         
-        # Find matching content
-        results = find_matching_content(question, pdf_texts)
+        # Use semantic search to find matching content
+        results = semantic_search(question, top_k=3)
         
         if not results:
             return jsonify({
                 'success': True,
                 'answer': 'No matching content found for your question. Try rephrasing or asking a different question.',
-                'sources': []
+                'sources': [],
+                'top_confidence': 0
             })
         
         # Combine results into an answer
         answer_parts = []
         sources = []
         
-        for result in results[:3]:  # Limit to top 3 results
-            answer_parts.append(f"From {result['filename']}: {result['content']}")
+        for result in results:
+            confidence_str = f"[{result['confidence']}% confidence]"
+            answer_parts.append(f"From {result['filename']} {confidence_str}:\n{result['content']}")
             sources.append({
                 'filename': result['filename'],
-                'content': result['content']
+                'content': result['content'],
+                'confidence': result['confidence']
             })
+        
+        top_confidence = results[0]['confidence'] if results else 0
         
         return jsonify({
             'success': True,
             'answer': '\n\n'.join(answer_parts),
-            'sources': sources
+            'sources': sources,
+            'top_confidence': top_confidence
         })
         
     except Exception as e:
         return jsonify({
             'success': False,
             'answer': f'An error occurred: {str(e)}',
-            'sources': []
+            'sources': [],
+            'top_confidence': 0
         }), 500
 
 
@@ -352,12 +433,20 @@ def load_pdfs_from_folder():
 
 
 if __name__ == '__main__':
-    print("Starting PDF QA Server...")
+    print("Starting PDF QA Server with Semantic Search...")
     print(f"PDF directory: {PDF_DIRECTORY}")
     print(f"PDF support available: {PDF_SUPPORT}")
+    print(f"Semantic search support available: {SEMANTIC_SEARCH_SUPPORT}")
     
     if not PDF_SUPPORT:
         print("Warning: PyPDF2 not installed. Install it with: pip install PyPDF2")
+    
+    if not SEMANTIC_SEARCH_SUPPORT:
+        print("Warning: sentence-transformers not installed. Install it with: pip install sentence-transformers")
+    else:
+        # Pre-load the sentence transformer model
+        print("Loading sentence transformer model (this may take a moment on first run)...")
+        get_sentence_model()
     
     # Pre-load PDFs at startup
     loaded_pdfs = load_all_pdfs()
